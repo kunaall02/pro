@@ -5,8 +5,8 @@ import re
 import os
 
 # --- TELEGRAM CONFIG ---
-BOT_TOKEN = "YOUR_BOT_TOKEN"  # Replace with your bot token
-CHAT_ID = "YOUR_CHAT_ID"      # Replace with your chat ID
+BOT_TOKEN = "8523893836:AAE7OCtwIdWA7bch8z9CnToLuJIzpmQAqqM"  # Replace with your bot token
+CHAT_ID = "7243538468"      # Replace with your chat ID
 # -----------------------
 
 def send_to_telegram(message):
