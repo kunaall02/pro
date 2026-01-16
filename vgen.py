@@ -11,7 +11,7 @@ import sys
 # ==========================================
 # CONFIGURATION
 # ==========================================
-PREFIX = "SVA"
+PREFIX = "SVD"
 TOTAL_LENGTH = 15
 BATCH_SIZE = 10000
 OUTPUT_FILE = "vouchers.txt"
