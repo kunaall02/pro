@@ -5,7 +5,7 @@ import re
 import os
 
 # --- TELEGRAM CONFIG ---
-BOT_TOKEN = "8523893836:AAE7OCtwIdWA7bch8z9CnToLuJIzpmQAqqM"  # Replace with your bot token
+BOT_TOKEN = "8490318398:AAHGmTsiDuW8uBJuSXo_rzYDXbhN2ZvULbc"  # Replace with your bot token
 CHAT_ID = "7243538468"      # Replace with your chat ID
 # -----------------------
 
