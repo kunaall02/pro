@@ -1,35 +1,44 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 import json
 import requests
 import time
 import re
-import os
+import signal
+import sys
+import io
 
-# --- TELEGRAM CONFIG ---
-BOT_TOKEN = "8490318398:AAHGmTsiDuW8uBJuSXo_rzYDXbhN2ZvULbc"  # Replace with your bot token
-CHAT_ID = "7243538468"      # Replace with your chat ID
-# -----------------------
+# Ensure UTF-8 output on Windows
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 
-def send_to_telegram(message):
-    if not BOT_TOKEN or not CHAT_ID or "YOUR" in BOT_TOKEN or "YOUR" in CHAT_ID:
-        # Don't send if not configured
-        return
+VOUCHER_VALUES = {
+    "SVH": 4000,
+    "SVC": 1000,
+    "SVD": 2000,
+    "SVI": 500
+}
 
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML"
-    }
-    try:
-        requests.post(url, json=payload, timeout=5)
-    except Exception as e:
-        print(f"Error sending to Telegram: {str(e)}")
+def signal_handler(sig, frame):
+    print("\n🔚 Terminating session gracefully...")
+    sys.exit(0)
 
 def load_cookies():
     with open("cookies.json", "r", encoding="utf-8") as f:
-        cookies_list = json.load(f)
-
-    return "; ".join(f"{cookie['name']}={cookie['value']}" for cookie in cookies_list)
+        raw = f.read().strip()
+    try:
+        cookie_list = json.loads(raw)
+        # Convert list of cookie objects to cookie string
+        if isinstance(cookie_list, list):
+            return "; ".join(f"{c['name']}={c['value']}" for c in cookie_list)
+        else:
+            # If it's already a dict, handle it
+            cookie_dict = cookie_list
+            return "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
+    except:
+        # If JSON parsing fails, assume it's already a cookie string
+        return raw
 
 def get_headers(cookie_string):
     return {
@@ -52,127 +61,164 @@ def get_headers(cookie_string):
         "cookie": cookie_string
     }
 
+def get_voucher_value(code):
+    prefix = code[:3].upper()
+    return VOUCHER_VALUES.get(prefix, None)
+
 def parse_vouchers_file():
     vouchers = []
-    current_price = None
-    
     with open("vouchers.txt", "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
-            if not line:
+            if not line or line.startswith("==="):
                 continue
-
-            if line.startswith("=== PRICE"):
-                price_match = re.search(r'₹(\d+)', line)
-                if price_match:
-                    current_price = price_match.group(1)
-                continue
-
-            if not line.startswith("==="):
-                vouchers.append({
-                    "code": line,
-                    "price": current_price
-                })
+            vouchers.append({'code': line})
     return vouchers
 
 def check_voucher(voucher_code, headers):
     url = "https://www.sheinindia.in/api/cart/apply-voucher"
     payload = {
         "voucherId": voucher_code,
-        "device": {"client_type": "web"}
+        "device": {
+            "client_type": "web"
+        }
     }
-    
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=30)
         return response.status_code, response.json()
     except Exception as e:
-        print(f"Error checking voucher {voucher_code}: {str(e)}")
+        print(f"⚠️ Validation error for {voucher_code}: {str(e)}")
         return None, None
 
 def reset_voucher(voucher_code, headers):
     url = "https://www.sheinindia.in/api/cart/reset-voucher"
     payload = {
         "voucherId": voucher_code,
-        "device": {"client_type": "web"}
+        "device": {
+            "client_type": "web"
+        }
     }
-    
     try:
         requests.post(url, json=payload, headers=headers, timeout=30)
     except Exception as e:
-        print(f"Error resetting voucher {voucher_code}: {str(e)}")
+        print(f"⚠️ Reset error for {voucher_code}: {str(e)}")
 
 def is_voucher_applicable(response_data):
     if not response_data:
         return False
-
     if "errorMessage" in response_data:
-        errors = response_data["errorMessage"].get("errors", [])
+        errors = response_data.get("errorMessage", {}).get("errors", [])
         for error in errors:
             if error.get("type") == "VoucherOperationError":
                 if "not applicable" in error.get("message", "").lower():
                     return False
-
     return "errorMessage" not in response_data
 
-
-def append_to_file(filename, price, code):
-    
-    
-    if not os.path.exists(filename):
-        with open(filename, "w", encoding="utf-8") as f:
-            f.write(f"=== PRICE ₹{price} ===\n{code}\n")
-        return
-
-   
-    with open(filename, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    
-    price_header = f"=== PRICE ₹{price} ==="
-    if price_header not in content:
-        with open(filename, "a", encoding="utf-8") as f:
-            f.write(f"\n{price_header}\n{code}\n")
-    else:
-        
-        with open(filename, "a", encoding="utf-8") as f:
-            f.write(f"{code}\n")
-
-def main():
-    print("Loading cookies...")
+def run_check(verbose=True):
+    if verbose:
+        print(f"\n🚀 Commencing voucher scan at {time.strftime('%Y-%m-%d %H:%M:%S')} 🚀")
+        print("🔑 Retrieving session data...")
     cookie_string = load_cookies()
     headers = get_headers(cookie_string)
-
-    print("Parsing vouchers...")
+    if verbose:
+        print("📜 Analyzing voucher list...")
     vouchers = parse_vouchers_file()
-    print(f"Found {len(vouchers)} vouchers to check\n")
-
+    if verbose:
+        print(f"🔍 Detected {len(vouchers)} codes to validate")
+    if len(vouchers) == 0:
+        if verbose:
+            print("📭 No vouchers found. Skipping this cycle.")
+        return [], []
+    valid_vouchers = []
+    checked_count = 0
     for i, voucher in enumerate(vouchers, 1):
-        voucher_code = voucher["code"]
-        price = voucher["price"]
-
-        print(f"Checking voucher {i}/{len(vouchers)}: {voucher_code} (₹{price})")
-
-        status_code, response_data = check_voucher(voucher_code, headers)
-
+        code = voucher['code']
+        value = get_voucher_value(code)
+        if verbose:
+            print(f"Validating {i}/{len(vouchers)} → {code}")
+        status_code, response_data = check_voucher(code, headers)
+        checked_count += 1
         if status_code is None:
-            print("  Failed to check voucher\n")
+            if verbose:
+                print("❌ Validation failed , Please try again or Check Manually")
             continue
-
-        print(f"  Status: {status_code}")
-
         if is_voucher_applicable(response_data):
-            print("  ✅ Applicable")
-            append_to_file("applicable_vouchers.txt", price, voucher_code)
-            message = f"✅ New valid voucher found!\n<b>Code:</b> {voucher_code}\n<b>Price:</b> ₹{price}"
-            send_to_telegram(message)
+            if value:
+                if verbose:
+                    print(f"✅ WORKING! → {code} worth ₹{value} 🎉")
+                valid_vouchers.append((code, value))
+            else:
+                if verbose:
+                    print(f"✅ Applicable → {code} (value unknown)")
         else:
-            print("  ❌ Not applicable ")
-            append_to_file("not_applicable_vouchers.txt", price, voucher_code)
-
-        reset_voucher(voucher_code, headers)
+            if verbose:
+                print(f"❌ Not working → {code}")
+        reset_voucher(code, headers)
         time.sleep(1)
+    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+    if valid_vouchers and verbose:
+        with open("valid_vouchers.txt", "a", encoding="utf-8") as f:
+            f.write(f"\n🎯 Valid Vouchers Found - {timestamp} 🎯\n")
+            grouped = {}
+            for code, val in valid_vouchers:
+                grouped.setdefault(val, []).append(code)
+            for val in sorted(grouped.keys(), reverse=True):
+                f.write(f"\n💸 Worth ₹{val} 💸\n")
+                for code in grouped[val]:
+                    f.write(f"{code}\n")
+        total_saved = sum(val for _, val in valid_vouchers)
+        print(f"\n🎉 SUCCESS! Found {len(valid_vouchers)} valid vouchers worth ₹{total_saved} in total! 🎉")
+        print("💾 Saved to 'valid_vouchers.txt'")
+    elif verbose:
+        print("\n😔 No valid vouchers with known value found this time.")
+    return valid_vouchers, checked_count
 
-    print("\n=== COMPLETED — Results saved live during the run ===")
+def main():
+    print(r"""
+========================================================
+██╗   ██╗███████╗███╗   ██╗ ██████╗ ███╗   ███╗
+██║   ██║██╔════╝████╗  ██║██╔═══██╗████╗ ████║
+██║   ██║█████╗  ██╔██╗ ██║██║   ██║██╔████╔██║
+╚██╗ ██╔╝██╔══╝  ██║╚██╗██║██║   ██║██║╚██╔╝██║
+ ╚████╔╝ ███████╗██║ ╚████║╚██████╔╝██║ ╚═╝ ██║
+  ╚═══╝  ╚══════╝╚═╝  ╚═══╝ ╚═════╝ ╚═╝     ╚═╝
+
+          Made By @HeyVenomBro
+    Join @ScripterUltraProMax & @SheinXCodes
+========================================================
+""")
+    signal.signal(signal.SIGINT, signal_handler)
+    print("🛡️  SHEIN Voucher Checker + Protector 🛡️")
+    print("Initiating first full scan...\n")
+
+    valid_found, _ = run_check(verbose=True)
+
+    print("\n🔄 Would you like to enable Protection Mode? (y/n): ")
+    choice = input().strip().lower()
+    if choice == 'y':
+        print("\n🛡️ Protection Mode ON! 🛡️")
+        print("🔍 Auto-scanning every 10 minutes to secure your vouchers...\n")
+        time.sleep(5)
+        check_num = 1
+        while True:
+            try:
+                valid_found, checked = run_check(verbose=False)
+                if valid_found:
+                    total_val = sum(val for _, val in valid_found)
+                    print(f"✅ Cycle #{check_num} → {len(valid_found)} valid vouchers worth ₹{total_val} secured! 💰")
+                else:
+                    print(f"⏳ Cycle #{check_num} completed → No new valid vouchers ({checked} checked)")
+                check_num += 1
+                print("😴 Sleeping 10 minutes before next scan...\n")
+                time.sleep(600)
+            except KeyboardInterrupt:
+                print("\n👋 Protection mode stopped by user.")
+                break
+            except Exception as e:
+                print(f"⚠️ Error occurred: {str(e)}. Retrying in 10 minutes...")
+                time.sleep(600)
+    else:
+        print("👋 Session ended. Happy shopping!")
 
 if __name__ == "__main__":
     main()
